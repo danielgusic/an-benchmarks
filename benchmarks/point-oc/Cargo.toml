@@ -1,0 +1,21 @@
+[package]
+name = "point-oc-host"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wasmtime = { path = "../../deps/wasmtime-an/crates/wasmtime", features = ["call-hook"] }
+sci-rs = { git = "https://github.com/ctiedt/rasta-rs", version = "0.1.0" }
+anyhow = "1"
+rand = "0.8"
+rand_chacha = "0.3"
+
+# Keep this crate out of the wasmtime fork's workspace.
+[workspace]
+
+# Optimized build that still carries line tables, so a sampling profiler
+# (samply) can attribute time to host + wasmtime-runtime functions by name.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = false

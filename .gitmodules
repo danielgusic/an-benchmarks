@@ -1,0 +1,15 @@
+[submodule "deps/wasmtime-an"]
+	path = deps/wasmtime-an
+	url = https://github.com/danielgusic/wasmtime-an.git
+[submodule "deps/wasm-float-transpiler"]
+	path = deps/wasm-float-transpiler
+	url = https://github.com/danielgusic/wasm-float-transpiler.git
+[submodule "deps/an-able-sqlite"]
+	path = deps/an-able-sqlite
+	url = https://github.com/danielgusic/an-able-sqlite.git
+[submodule "deps/wasm-point-oc"]
+	path = deps/wasm-point-oc
+	url = https://github.com/ctiedt/wasm-point-oc.git
+[submodule "deps/test_db"]
+	path = deps/test_db
+	url = https://github.com/datacharmer/test_db.git

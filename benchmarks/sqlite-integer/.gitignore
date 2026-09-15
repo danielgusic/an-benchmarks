@@ -1,0 +1,13 @@
+bench.db
+bench_employees.db
+.cache/
+*.cwasm
+/outputs/
+out_*.txt
+tracker_*.txt
+work_*.db
+.work_*
+.builtN
+.time_*
+.stderr_*
+.setup_*

@@ -1,0 +1,6 @@
+/build/
+/.cache/
+/sqlite/
+/speedtest1.c
+
+results.txt
