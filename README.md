@@ -16,7 +16,7 @@ Run
 git submodule update --init --recursive
 ```
 
-Install stable Rust/Cargo and the [WASI SDK](https://github.com/WebAssembly/wasi-sdk), then run:
+Install stable Rust/Cargo and the clang [WASI SDK](https://github.com/WebAssembly/wasi-sdk), then run:
 
 ```bash
 rustup target add --toolchain stable wasm32-wasip1 wasm32-unknown-unknown
@@ -25,20 +25,7 @@ export WASI_SDK_DIR=/absolute/path/to/wasi-sdk
 ```
 
 This builds the shared release Wasmtime CLI, float transpiler and APFloat backend,
-integer-only SQLite module, and point-OC guest. It uses stable Rust by
-default; `RUSTUP_TOOLCHAIN` can override it. It does not generate benchmark datasets
-or download regular SQLite and `speedtest1.c`.
+integer-only SQLite module, and point-OC guest. 
 
 Then follow the instructions in an individual benchmark's `README.md`.
-
-## Workflow and system requirements
-
-- Rust
-- clang [WASI SDK](https://github.com/WebAssembly/wasi-sdk)
-
-For further dependencies, see the `README.md` files in the individual benchmarks.
-
-Run `./build-deps.sh` once from the repository root, to build all dependencies. 
-
-Scripts resolve files relative to their own location and can also be invoked
-by absolute path. 
+These may also contain instructions for further dependencies.
