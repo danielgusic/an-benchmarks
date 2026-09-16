@@ -3,23 +3,6 @@
 This benchmark compares regular Wasmtime with the AN-encoded runtime using
 SQLite's official `speedtest1` benchmark. It is intended for comparing the performance of [wasmtime](https://github.com/bytecodealliance/wasmtime) with [wasmtime-an](https://github.com/danielgusic/wasmtime-an).
 
-## Repository layout
-
-```text
-an-benchmark/
-├── build-deps.sh                builds the shared dependencies
-├── deps/
-│   ├── sqlite/                   Official SQLite Git submodule (includes test/speedtest1.c)
-│   ├── wasm-float-transpiler/    Git submodule
-│   └── wasmtime-an/              Git submodule
-└── benchmarks/sqlite-softfloat/
-    ├── setup.sh                builds and precompiles the SQLite modules
-    ├── run.sh                  runs and measures the benchmark
-    └── build/                  generated files
-```
-
-The `build/` directory is ignored by Git and created by `setup.sh`.
-
 ## Setup
 
 First, follow the instructions in the root's `README.md`.
@@ -91,8 +74,3 @@ You have to use `-C an-encoding=y` with the encoded version and `-C an-encoding=
 `--size` is the size, `--big-transactions` adds `BEGIN` and `END` around large tests, `--testset` is the benchmark that is to be run (e.g. `main`, `orm`, `fp`, `star`, `cte`, `json`, `trigger`, `parsenumber`, `app` (seems to break for WASM), `rtree`, `debug1`), `--verify` computes hashes that are used to verify that both version produce the same results.
 
 For further flags look into `../../deps/sqlite/test/speedtest1.c`.
-
-See the [root requirements](../../README.md#workflow-and-system-requirements)
-for native build tools and shell utilities. Setup additionally uses the WASI SDK
-`llvm-nm` binary. `WASMTIME_BIN` overrides the CLI for both setup and run;
-re-run setup when changing it. Record the pinned SQLite release with your results.
