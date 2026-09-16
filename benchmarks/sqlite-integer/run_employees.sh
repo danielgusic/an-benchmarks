@@ -26,7 +26,7 @@ GUEST=/w
 OUTPUTS="$HERE/outputs"
 mkdir -p "$OUTPUTS"
 
-file_size_bytes() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }
+file_size_bytes() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1"; }
 
 [[ -x "$WT" ]] || { echo "missing Wasmtime binary: $WT"; exit 1; }
 for f in "$OFF" "$AN" "$DB" "$WL"; do

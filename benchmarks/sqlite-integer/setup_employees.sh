@@ -9,7 +9,7 @@ DB="$HERE/build/bench_employees.db"
 DATASET="$ROOT/deps/test_db"
 GUEST=/w
 
-file_size_bytes() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }
+file_size_bytes() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1"; }
 
 [[ -x "$WT" ]] || { echo "missing Wasmtime binary: $WT"; exit 1; }
 [[ -f "$OFF" ]] || { echo "missing $OFF -- run ./setup.sh first"; exit 1; }

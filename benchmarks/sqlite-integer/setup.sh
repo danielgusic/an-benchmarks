@@ -24,7 +24,7 @@ AN="$HERE/build/sqlite.an.cwasm"
 DB="$HERE/build/bench.db"
 GUEST=/w
 
-file_size_bytes() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }
+file_size_bytes() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1"; }
 
 [[ -x "$WT" ]] || { echo "missing Wasmtime binary: $WT"; exit 1; }
 [[ -f "$WASM" ]] || { echo "missing float-free SQLite module: $WASM"; exit 1; }

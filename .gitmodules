@@ -13,3 +13,6 @@
 [submodule "deps/test_db"]
 	path = deps/test_db
 	url = https://github.com/datacharmer/test_db.git
+[submodule "deps/sqlite"]
+	path = deps/sqlite
+	url = https://github.com/sqlite/sqlite.git

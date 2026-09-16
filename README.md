@@ -5,7 +5,7 @@ A collection of some benchmarks for [wasmtime-an](https://github.com/danielgusic
 | Benchmark | Source | Instructions |
 |---|---|---|
 | Integer-only SQLite: some i32/i64 and employees (string heavy) | Modified `an-able-sqlite` | [README](benchmarks/sqlite-integer/README.md) |
-| SQLite speedtest1 with soft floats | Manual download of regular SQLite | [README](benchmarks/sqlite-softfloat/README.md) |
+| SQLite speedtest1 with soft floats | Official SQLite | [README](benchmarks/sqlite-softfloat/README.md) |
 | Point object controller | `wasm-point-oc` guest, local Rust host | [README](benchmarks/point-oc/README.md) |
 | Iterative Fibonacci | Local Rust program | [README](benchmarks/fibonacci/README.md) |
 

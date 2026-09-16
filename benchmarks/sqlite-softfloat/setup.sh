@@ -4,8 +4,9 @@ exec 2>&1
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$ROOT/build"
-SQLITE="$ROOT/sqlite"
-SPEEDTEST="$ROOT/speedtest1.c"
+SQLITE_SOURCE="$ROOT/../../deps/sqlite"
+SQLITE="$BUILD/sqlite"
+SPEEDTEST="$SQLITE_SOURCE/test/speedtest1.c"
 WASMTIME_SOURCE="$ROOT/../../deps/wasmtime-an"
 TRANSPILER_SOURCE="$ROOT/../../deps/wasm-float-transpiler"
 
@@ -24,14 +25,24 @@ ENCODED_CWASM="$BUILD/speedtest1.encoded.cwasm"
 
 mkdir -p "$BUILD"
 
-for source in "$WASMTIME_SOURCE/Cargo.toml" "$TRANSPILER_SOURCE/Cargo.toml" "$SQLITE/sqlite3.c" "$SQLITE/sqlite3.h" "$SPEEDTEST"; do
-  [[ -f "$source" ]] || { echo "Missing $source (see README)" >&2; exit 1; }
+for source in "$WASMTIME_SOURCE/Cargo.toml" "$TRANSPILER_SOURCE/Cargo.toml" "$SQLITE_SOURCE/configure" "$SPEEDTEST"; do
+  [[ -f "$source" ]] || { echo "Missing $source; run git submodule update --init --recursive" >&2; exit 1; }
 done
 
 for binary in "$CLANG" "$LLVM_NM" "$WASMTIME" "$TRANSPILER"; do
   [[ -x "$binary" ]] || { echo "Missing $binary; run ../../build-deps.sh first" >&2; exit 1; }
 done
 [[ -f "$SOFT_FLOAT" ]] || { echo "Missing $SOFT_FLOAT; run ../../build-deps.sh first" >&2; exit 1; }
+
+# Generate the amalgamation with native tools, then cross-compile it below.
+# Recreate it on each setup so changing the submodule cannot reuse stale sources.
+echo "==> Generate SQLite amalgamation"
+mkdir -p "$SQLITE"
+(
+  cd "$SQLITE"
+  "$SQLITE_SOURCE/configure" --disable-tcl --disable-readline
+  make -B sqlite3.c sqlite3.h
+)
 
 # The transpiler turns leaf functions into functions which call soft-float
 # helpers. Disabling the red zone prevents those new calls from overwriting
