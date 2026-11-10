@@ -17,21 +17,22 @@
 //! Usage:
 //!   point-oc-host [WASM_PATH] [--an] [--an-constant N] [--bench N]
 //!
-//!   WASM_PATH       defaults to the release build of deps/wasm-point-oc
-//!   --an            enable AN-encoding (Config::an_encoding)
-//!   --an-constant N override the AN constant A
-//!   --bench N       benchmark mode: cycle the scripted conversation until N
-//!                   telegrams have been served, suppress per-telegram output,
-//!                   and report wall time + telegrams/sec for the guest run
-//!   --fault TARGETS periodically flip random bits in linear memory, the
-//!                   encoded shadow, and/or the guest stack window
-//!   --fault-seed N  deterministic seed for fault injection
+//!   WASM_PATH              defaults to the release build of deps/wasm-point-oc
+//!   --an                   enable AN-encoding (Config::an_encoding)
+//!   --an-constant N        override the AN constant A
+//!   --bench N              benchmark mode: cycle the scripted conversation until N
+//!                          telegrams have been served, suppress per-telegram output,
+//!                          and report wall time + telegrams/sec for the guest run
+//!   --network-latency-us N Simulate network latency of N microseconds
+//!   --fault TARGETS        periodically flip random bits in linear memory, the
+//!                          encoded shadow, and/or the guest stack window
+//!   --fault-seed N         deterministic seed for fault injection
 //!   --fault-period-us N
-//!                   delay between injected bit flips, in microseconds
-//!   --fault-count N stop the injector after N successful flips
+//!                          delay between injected bit flips, in microseconds
+//!   --fault-count N        stop the injector after N successful flips
 //!   --fault-final-memory-check
-//!                   also report latent raw/shadow mismatches after the scripted
-//!                   workload
+//!                          also report latent raw/shadow mismatches after the scripted
+//!                          workload
 
 use std::{collections::VecDeque, sync::Arc, time::Duration};
 
@@ -111,6 +112,7 @@ fn main() -> Result<()> {
     let mut fault_period = Duration::from_millis(10);
     let mut fault_count: Option<u64> = None;
     let mut fault_final_memory_check = false;
+    let mut network_latency: Duration = Duration::ZERO;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -163,9 +165,22 @@ fn main() -> Result<()> {
                 )?);
             }
             "--fault-final-memory-check" => fault_final_memory_check = true,
+            "--network-latency-us" => {
+                let micros = parse_u64_arg(
+                    "--network-latency-us",
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--network-latency-us needs a value"))?,
+                )?;
+                if micros == 0 {
+                    return Err(anyhow::anyhow!(
+                        "--network-latency-us must be greater than 0"
+                    ));
+                }
+                network_latency = Duration::from_micros(micros);
+            }
             "-h" | "--help" => {
                 println!(
-                    "usage: point-oc-host [WASM_PATH] [--an] [--an-constant N] [--bench N] [--perfmap]\n\
+                    "usage: point-oc-host [WASM_PATH] [--an] [--an-constant N] [--bench N] [--perfmap] [--network-latency-us N]\n\
                      \n\
                      fault injection:\n\
                        --fault TARGETS        comma-separated: memory,shadow,stack,all\n\
@@ -243,7 +258,7 @@ fn main() -> Result<()> {
     linker.func_wrap(
         "env",
         "recv_msg",
-        |mut caller: Caller<'_, HostState>, buf: i32| -> wasmtime::Result<i32> {
+        move |mut caller: Caller<'_, HostState>, buf: i32| -> wasmtime::Result<i32> {
             let state = caller.data_mut();
             let bytes = if let Some(bytes) = state.inbox.pop_front() {
                 bytes
@@ -266,6 +281,9 @@ fn main() -> Result<()> {
             if !caller.data().quiet {
                 println!("  → recv  {}", describe(&bytes));
             }
+            if !network_latency.is_zero() {
+                std::thread::sleep(network_latency);
+            }
             Ok(bytes.len() as i32)
         },
     )?;
@@ -274,7 +292,7 @@ fn main() -> Result<()> {
     linker.func_wrap(
         "env",
         "send_msg",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> wasmtime::Result<()> {
+        move |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> wasmtime::Result<()> {
             let mem = caller
                 .get_export("memory")
                 .and_then(|e| e.into_memory())
@@ -297,6 +315,9 @@ fn main() -> Result<()> {
             }
             if !caller.data().quiet {
                 println!("  ← send  {}", describe(&bytes));
+            }
+            if !network_latency.is_zero() {
+                std::thread::sleep(network_latency);
             }
             Ok(())
         },
