@@ -2,3 +2,7 @@
 **/target/
 **/build/
 /results/
+deps/mibench/telecomm.tar.gz
+deps/mibench/network.tar.gz
+deps/mibench/telecomm
+deps/mibench/network

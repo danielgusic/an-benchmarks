@@ -41,5 +41,18 @@ mkdir -p "$ROOT/benchmarks/sqlite-integer/build"
   -o "$ROOT/benchmarks/sqlite-integer/build/sqlite.wasm"
 echo "==> Build point-OC guest"
 CARGO_TARGET_DIR="$ROOT/deps/wasm-point-oc/target" cargo build --locked --release \
-  --target wasm32-unknown-unknown --manifest-path "$ROOT/deps/wasm-point-oc/Cargo.toml"
+   --target wasm32-unknown-unknown --manifest-path "$ROOT/deps/wasm-point-oc/Cargo.toml"
+
+echo "==> Build MiBench telecomm"
+curl -o "$ROOT/deps/mibench/telecomm.tar.gz" "https://vhosts.eecs.umich.edu/mibench/telecomm.tar.gz"
+tar -xzf "$ROOT/deps/mibench/telecomm.tar.gz" -C "$ROOT/deps/mibench"
+patch "$ROOT/deps/mibench/telecomm/CRC32/crc_32.c" "$ROOT/deps/mibench/crc32.patch"
+"$WASI_SDK_DIR/bin/clang" -o "$ROOT/deps/mibench/telecomm/CRC32/crc_32.wasm" -lc-printscan-no-floating-point -O3 "$ROOT/deps/mibench/telecomm/CRC32/crc_32.c"
+
+echo "==> Build MiBench network"
+curl -o "$ROOT/deps/mibench/network.tar.gz" "https://vhosts.eecs.umich.edu/mibench/network.tar.gz"
+tar -xzf "$ROOT/deps/mibench/network.tar.gz" -C "$ROOT/deps/mibench"
+patch "$ROOT/deps/mibench/network/dijkstra/dijkstra_large.c" "$ROOT/deps/mibench/dijkstra.patch"
+"$WASI_SDK_DIR/bin/clang" -o "$ROOT/deps/mibench/network/dijkstra/dijkstra_large.wasm" -lc-printscan-no-floating-point -O3 "$ROOT/deps/mibench/network/dijkstra/dijkstra_large.c"
+   
 echo "==> Dependencies built. Follow each benchmark README for setup and execution."

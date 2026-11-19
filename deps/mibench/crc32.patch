@@ -1,0 +1,4 @@
+179c179
+<       register errors = 0;
+---
+>       register int errors = 0;
