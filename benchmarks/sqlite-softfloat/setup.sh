@@ -73,6 +73,7 @@ WITH_HELPERS="$BUILD/speedtest1.with-helpers.wasm"
 "$TRANSPILER" "$WITH_HELPERS" "$ENCODED_WASM"
 rm "$WITH_HELPERS"
 
+# Both modules use the same soft-float Wasm; only AN encoding differs.
 echo "==> Precompile both modules"
 "$WASMTIME" compile -C cache=n -C an-encoding=n "$ENCODED_WASM" -o "$REGULAR_CWASM"
 "$WASMTIME" compile -C cache=n -C an-encoding=y "$ENCODED_WASM" -o "$ENCODED_CWASM"
