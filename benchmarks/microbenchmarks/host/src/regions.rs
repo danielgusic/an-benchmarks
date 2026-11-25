@@ -1,5 +1,8 @@
+use std::ops::Range;
+
 use anyhow::{Result, bail};
 use clap::ValueEnum;
+use wasmtime::{StackCreator, StackMemory};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Region {
@@ -36,10 +39,6 @@ impl Span {
     pub fn end(&self) -> usize {
         self.start + self.len
     }
-
-    pub fn contains(&self, addr: usize) -> bool {
-        (self.start..self.end()).contains(&addr)
-    }
 }
 
 pub fn subtract(spans: &[Span], holes: &[Span]) -> Vec<Span> {
@@ -64,6 +63,91 @@ pub fn subtract(spans: &[Span], holes: &[Span]) -> Vec<Span> {
             .collect();
     }
     out
+}
+
+pub struct FiberStack {
+    base: usize,
+    guard: usize,
+    size: usize,
+}
+
+impl FiberStack {
+    pub fn new(size: usize) -> Result<Self> {
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        let size = size.next_multiple_of(page);
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                page + size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANON,
+                -1,
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            bail!(
+                "mmap of the fiber stack failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        if unsafe { libc::mprotect(ptr, page, libc::PROT_NONE) } != 0 {
+            bail!(
+                "mprotect of the fiber stack guard failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(Self {
+            base: ptr as usize,
+            guard: page,
+            size,
+        })
+    }
+
+    pub fn span(&self) -> Span {
+        Span::new(self.base + self.guard, self.size)
+    }
+
+    pub fn top_span(&self, len: usize) -> Span {
+        let len = len.min(self.size);
+        Span::new(self.base + self.guard + self.size - len, len)
+    }
+}
+
+struct FiberStackHandle {
+    base: usize,
+    guard: usize,
+    size: usize,
+}
+
+unsafe impl StackMemory for FiberStackHandle {
+    fn top(&self) -> *mut u8 {
+        (self.base + self.guard + self.size) as *mut u8
+    }
+
+    fn range(&self) -> Range<usize> {
+        self.base + self.guard..self.base + self.guard + self.size
+    }
+
+    fn guard_range(&self) -> Range<*mut u8> {
+        self.base as *mut u8..(self.base + self.guard) as *mut u8
+    }
+}
+
+unsafe impl StackCreator for FiberStack {
+    fn new_stack(&self, size: usize, _zeroed: bool) -> wasmtime::Result<Box<dyn StackMemory>> {
+        if size > self.size {
+            wasmtime::bail!(
+                "fiber stack of {size} bytes requested, only {} mapped",
+                self.size
+            );
+        }
+        Ok(Box::new(FiberStackHandle {
+            base: self.base,
+            guard: self.guard,
+            size: self.size,
+        }))
+    }
 }
 
 #[cfg(target_os = "linux")]

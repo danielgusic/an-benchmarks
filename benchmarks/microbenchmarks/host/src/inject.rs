@@ -6,7 +6,7 @@ use std::{
     process::{Command, ExitStatus, Stdio},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread,
@@ -17,15 +17,28 @@ use anyhow::{Result, bail};
 use clap::{Args, ValueEnum};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use wasmtime::{Module, Store};
+use wasmtime::{Engine, Module, Store};
 
 use crate::{
-    common::{Context, Guest, GuestOpts, Phase, WASM_STACK, compile},
-    regions::{Region, Span, flip_code, flip_data, subtract, writable_mappings},
+    common::{Context, Guest, GuestOpts, Phase, WASM_STACK, block_on, compile},
+    regions::{FiberStack, Region, Span, flip_code, flip_data, subtract, writable_mappings},
 };
 
 pub const CSV_HEADER: &str = "bench,mode,an_constant,param,iters,regions,seed,experiment,\
-region,offset,region_size,bit,delay_ns,flip_ns,run_ns,outcome,detail,checksum";
+region,offset,region_size,bit,inject_fuel,flip_ns,run_ns,outcome,detail,checksum";
+
+const FIBER_STACK: usize = 2 * 1024 * 1024;
+
+const WALL_MARGIN: f64 = 4.0;
+
+fn inject_engine(opts: &GuestOpts, stack: Option<Arc<FiberStack>>) -> Result<Engine> {
+    let mut config = opts.config();
+    config.consume_fuel(true).async_stack_size(FIBER_STACK);
+    if let Some(stack) = stack {
+        config.with_host_stack(stack);
+    }
+    Ok(Engine::new(&config)?)
+}
 
 const OUTCOMES: [&str; 7] = [
     "correct",
@@ -102,7 +115,10 @@ pub struct ChildArgs {
     experiment: Option<u64>,
 
     #[arg(long, default_value_t = 0)]
-    delay_max_ns: u64,
+    fuel_max: u64,
+
+    #[arg(long, default_value_t = u64::MAX)]
+    fuel_budget: u64,
 }
 
 struct TempModule(PathBuf);
@@ -174,7 +190,10 @@ pub fn run(args: InjectArgs) -> Result<()> {
         }
         eprintln!("note: AN is off, so the shadow region is skipped");
     }
-    let engine = opts.engine()?;
+    if !(args.timeout_factor >= 1.0) {
+        bail!("--timeout-factor must be at least 1");
+    }
+    let engine = inject_engine(opts, None)?;
     let module = compile(&engine, &opts.wasm)?;
     let cwasm = TempModule(std::env::temp_dir().join(format!(
         "micro-host-{}-{}.cwasm",
@@ -186,7 +205,7 @@ pub fn run(args: InjectArgs) -> Result<()> {
     let regions_arg = args.regions.iter().map(|r| r.name()).collect::<Vec<_>>();
     let weighting = args.weighting.to_possible_value().unwrap();
 
-    let child_cmd = |experiment: Option<u64>, delay_max_ns: u64| {
+    let child_cmd = |experiment: Option<u64>, fuel_max: u64, fuel_budget: u64| {
         let mut cmd = Command::new(&exe);
         cmd.arg("inject-child")
             .arg(&cwasm.0)
@@ -195,7 +214,8 @@ pub fn run(args: InjectArgs) -> Result<()> {
             .args(["--regions", &regions_arg.join(",")])
             .args(["--weighting", weighting.get_name()])
             .args(["--seed", &args.seed.to_string()])
-            .args(["--delay-max-ns", &delay_max_ns.to_string()]);
+            .args(["--fuel-max", &fuel_max.to_string()])
+            .args(["--fuel-budget", &fuel_budget.to_string()]);
         if opts.an {
             cmd.arg("--an");
             if let Some(a) = opts.an_constant {
@@ -220,11 +240,11 @@ pub fn run(args: InjectArgs) -> Result<()> {
     );
     let mut stdout = std::io::stdout().lock();
 
-    let mut golden_run = Vec::new();
     let mut golden_wall = Vec::new();
     let mut golden = None;
+    let mut golden_fuel = None;
     for _ in 0..args.golden_runs {
-        let done = spawn_and_wait(child_cmd(None, 0), None)?;
+        let done = spawn_and_wait(child_cmd(None, 0, u64::MAX), None)?;
         let report = Report::parse(&done.stdout);
         if field(&report.result, "status") != "ok" || !done.status.is_some_and(|s| s.success()) {
             bail!(
@@ -236,6 +256,16 @@ pub fn run(args: InjectArgs) -> Result<()> {
         }
         let checksum: u64 = field(&report.result, "checksum").parse()?;
         let run_ns: u64 = field(&report.result, "run_ns").parse()?;
+        let fuel: (u64, u64) = (
+            field(&report.result, "run_fuel").parse()?,
+            field(&report.result, "fuel").parse()?,
+        );
+        match golden_fuel {
+            Some(g) if g != fuel => bail!(
+                "golden runs used different fuel: {g:?} vs {fuel:?} (bench_run, run + verify)"
+            ),
+            _ => golden_fuel = Some(fuel),
+        }
         match (golden, args.expect) {
             (Some(g), _) if g != checksum => {
                 bail!("golden runs disagree: checksum {g} vs {checksum}")
@@ -246,23 +276,29 @@ pub fn run(args: InjectArgs) -> Result<()> {
             _ => golden = Some(checksum),
         }
         if args.csv {
-            writeln!(stdout, "{prefix},,,,,,,,{run_ns},golden,,{checksum}")?;
+            writeln!(
+                stdout,
+                "{prefix},,,,,,{},,{run_ns},golden,,{checksum}",
+                fuel.0
+            )?;
         }
-        golden_run.push(run_ns);
         golden_wall.push(done.wall);
     }
     let golden = golden.unwrap();
-    golden_run.sort_unstable();
+    let (run_fuel, total_fuel) = golden_fuel.unwrap();
+    if run_fuel == 0 {
+        bail!("bench_run used no fuel");
+    }
+    let fuel_budget = ((total_fuel as f64 * args.timeout_factor).ceil() as u64).max(total_fuel + 1);
     golden_wall.sort_unstable();
-    let delay_max_ns = golden_run[golden_run.len() / 2].max(1);
     let timeout = golden_wall[golden_wall.len() / 2]
-        .mul_f64(args.timeout_factor)
+        .mul_f64(args.timeout_factor * WALL_MARGIN)
         .max(Duration::from_millis(args.min_timeout_ms));
     eprintln!(
-        "{} / AN {}: golden checksum {golden}, bench_run {:.3} ms, process {:.1} ms -> timeout {:.0} ms",
+        "{} / AN {}: golden checksum {golden}, bench_run fuel {run_fuel}, fuel budget {fuel_budget}, \
+         process {:.1} ms -> wall-clock backstop {:.0} ms",
         opts.name(),
         if opts.an { "on" } else { "off" },
-        delay_max_ns as f64 / 1e6,
         golden_wall[golden_wall.len() / 2].as_secs_f64() * 1e3,
         timeout.as_secs_f64() * 1e3,
     );
@@ -283,8 +319,9 @@ pub fn run(args: InjectArgs) -> Result<()> {
                     if i >= end {
                         break;
                     }
-                    let row = spawn_and_wait(child_cmd(Some(i), delay_max_ns), Some(timeout))
-                        .and_then(|done| classify(i, &done, golden));
+                    let row =
+                        spawn_and_wait(child_cmd(Some(i), run_fuel, fuel_budget), Some(timeout))
+                            .and_then(|done| classify(i, &done, golden));
                     if row.is_err() {
                         abort.store(true, Ordering::SeqCst);
                     }
@@ -425,13 +462,9 @@ fn classify(i: u64, done: &Finished, golden: u64) -> Result<(u64, String, &'stat
     let (outcome, detail) = match (done.status, result) {
         (None, _) => (
             "timeout",
-            format!("killed after {} ms", done.wall.as_millis()),
+            format!("killed after {} ms (wall clock)", done.wall.as_millis()),
         ),
-        (Some(_), Some(_))
-            if flip_ns == "-" || flip_ns.parse::<u64>()? > run_ns.parse::<u64>()? =>
-        {
-            ("late", String::new())
-        }
+        (Some(_), Some(_)) if flip_ns == "-" => ("late", String::new()),
         (Some(_), Some(r)) => match r.get("status").map(String::as_str) {
             Some("ok") => {
                 checksum = field(result, "checksum");
@@ -445,6 +478,7 @@ fn classify(i: u64, done: &Finished, golden: u64) -> Result<(u64, String, &'stat
                 let trap = field(result, "trap");
                 let outcome = match trap {
                     "AnMemoryMismatch" | "AnCodewordInvalid" => "an-detected",
+                    "OutOfFuel" => "timeout",
                     _ => "trap",
                 };
                 let detail = match field(result, "phase") {
@@ -471,109 +505,34 @@ fn classify(i: u64, done: &Finished, golden: u64) -> Result<(u64, String, &'stat
         field(plan, "offset"),
         field(plan, "region_size"),
         field(plan, "bit"),
-        field(plan, "delay_ns"),
+        field(plan, "inject_fuel"),
         flip_ns.replace('-', ""),
         run_ns,
     );
     Ok((i, line, outcome))
 }
 
-const WAITING: u8 = 0;
-const ARMED: u8 = 1;
-const CANCELLED: u8 = 2;
-
-#[derive(Default)]
-struct Injector {
-    sp: AtomicUsize,
-    state: AtomicU8,
-    go: AtomicBool,
-    done: AtomicBool,
-    addr: AtomicUsize,
-    bit: AtomicU8,
-    delay_ns: AtomicU64,
-    flip_ns: AtomicU64,
-}
-
-impl Injector {
-    fn run(&self) {
-        let marker = 0u8;
-        self.sp.store(
-            std::hint::black_box(&marker) as *const u8 as usize,
-            Ordering::SeqCst,
-        );
-        loop {
-            match self.state.load(Ordering::SeqCst) {
-                ARMED => break,
-                CANCELLED => return,
-                WAITING => thread::yield_now(),
-                _ => unreachable!(),
-            }
-        }
-        while !self.go.load(Ordering::SeqCst) {
-            std::hint::spin_loop();
-        }
-        let start = Instant::now();
-        let delay = Duration::from_nanos(self.delay_ns.load(Ordering::SeqCst));
-        loop {
-            if self.done.load(Ordering::SeqCst) {
-                return; // bench_run finished first: no flip
-            }
-            let elapsed = start.elapsed();
-            if elapsed >= delay {
-                break;
-            }
-            let remaining = delay - elapsed;
-            if remaining > Duration::from_millis(10) {
-                thread::sleep(remaining - Duration::from_millis(5));
-            } else {
-                std::hint::spin_loop();
-            }
-        }
-        unsafe {
-            flip_data(
-                self.addr.load(Ordering::SeqCst),
-                self.bit.load(Ordering::SeqCst),
-            )
-        };
-        self.flip_ns
-            .store(start.elapsed().as_nanos() as u64, Ordering::SeqCst);
-    }
-}
-
 pub fn child(args: ChildArgs) -> Result<()> {
     let opts = &args.guest;
-    let engine = opts.engine()?;
+    let fiber = Arc::new(FiberStack::new(FIBER_STACK)?);
+    let engine = inject_engine(opts, Some(Arc::clone(&fiber)))?;
     let module = unsafe { Module::deserialize_file(&engine, &opts.wasm) }
         .context("failed to load the precompiled guest")?;
     let mut store = Store::new(&engine, ());
+    store.set_fuel(u64::MAX)?;
     let guest = Guest::instantiate(&mut store, &module)?;
     guest.setup(&mut store, opts.param)?;
     guest.reset(&mut store)?;
+    store.set_fuel(args.fuel_budget)?;
 
     let Some(experiment) = args.experiment else {
         let start = Instant::now();
-        let result = guest.run.call(&mut store, opts.iters);
+        let result = block_on(guest.run.call_async(&mut store, opts.iters));
         let run_ns = start.elapsed().as_nanos() as u64;
-        let result = guest.checksum(&mut store, result);
-        report_and_exit(result, run_ns, None);
+        finish(&mut store, &guest, result, args.fuel_budget, run_ns, None);
     };
 
-    let injector = Arc::new(Injector {
-        flip_ns: AtomicU64::new(u64::MAX),
-        ..Default::default()
-    });
-    let handle = {
-        let injector = Arc::clone(&injector);
-        thread::spawn(move || injector.run())
-    };
-    while injector.sp.load(Ordering::SeqCst) == 0 {
-        thread::yield_now();
-    }
-
-    let marker = 0u8;
-    let sp = std::hint::black_box(&marker) as *const u8 as usize;
-    let stack = Span::new(sp - WASM_STACK, WASM_STACK);
-
+    let stack = fiber.top_span(WASM_STACK);
     let memory = guest.instance.get_memory(&mut store, "memory");
     let memory_span = memory.map(|m| Span::new(m.data_ptr(&store) as usize, m.data_size(&store)));
     let shadow_span = memory
@@ -591,13 +550,7 @@ pub fn child(args: ChildArgs) -> Result<()> {
             Region::Code => vec![code_span],
             Region::Runtime => {
                 let mappings = writable_mappings()?;
-                let injector_sp = injector.sp.load(Ordering::SeqCst);
-                let mut holes: Vec<Span> = mappings
-                    .iter()
-                    .copied()
-                    .filter(|m| m.contains(injector_sp))
-                    .collect();
-                holes.extend([stack, code_span]);
+                let mut holes = vec![fiber.span(), code_span];
                 holes.extend(memory_span);
                 holes.extend(shadow_span);
                 subtract(&mappings, &holes)
@@ -608,7 +561,6 @@ pub fn child(args: ChildArgs) -> Result<()> {
         }
     }
     if candidates.is_empty() {
-        injector.state.store(CANCELLED, Ordering::SeqCst);
         bail!("none of the selected regions exists in this configuration");
     }
 
@@ -644,49 +596,89 @@ pub fn child(args: ChildArgs) -> Result<()> {
     }
     let bit: u8 = rng.gen_range(0..8);
     let fraction: u64 = rng.r#gen();
-    let delay_ns = if region == Region::Code {
+    let inject_fuel = if region == Region::Code {
         0
     } else {
-        ((u128::from(fraction) * u128::from(args.delay_max_ns)) >> 64) as u64
+        1 + ((u128::from(fraction) * u128::from(args.fuel_max.max(1))) >> 64) as u64
     };
     println!(
-        "plan region={} offset={offset} region_size={} bit={bit} delay_ns={delay_ns}",
+        "plan region={} offset={offset} region_size={} bit={bit} inject_fuel={inject_fuel}",
         region.name(),
         total(spans)
     );
     std::io::stdout().flush()?;
 
     if region == Region::Code {
-        injector.state.store(CANCELLED, Ordering::SeqCst);
         unsafe { flip_code(addr, bit)? };
-        injector.flip_ns.store(0, Ordering::SeqCst);
-    } else {
-        injector.addr.store(addr, Ordering::SeqCst);
-        injector.bit.store(bit, Ordering::SeqCst);
-        injector.delay_ns.store(delay_ns, Ordering::SeqCst);
-        injector.state.store(ARMED, Ordering::SeqCst);
+        let start = Instant::now();
+        let result = block_on(guest.run.call_async(&mut store, opts.iters));
+        let run_ns = start.elapsed().as_nanos() as u64;
+        finish(
+            &mut store,
+            &guest,
+            result,
+            args.fuel_budget,
+            run_ns,
+            Some(0),
+        );
     }
 
-    injector.go.store(true, Ordering::SeqCst);
+    store.fuel_async_yield_interval(Some(inject_fuel))?;
+    let mut flip_ns = None;
     let start = Instant::now();
-    let result = guest.run.call(&mut store, opts.iters);
+    let result = {
+        let mut run = std::pin::pin!(guest.run.call_async(&mut store, opts.iters));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        loop {
+            match run.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(result) => break result,
+                std::task::Poll::Pending if flip_ns.is_none() => {
+                    unsafe { flip_data(addr, bit) };
+                    flip_ns = Some(start.elapsed().as_nanos() as u64);
+                }
+                std::task::Poll::Pending => {}
+            }
+        }
+    };
     let run_ns = start.elapsed().as_nanos() as u64;
-    injector.done.store(true, Ordering::SeqCst);
-    let _ = handle.join();
-    let flip_ns = injector.flip_ns.load(Ordering::SeqCst);
-    let result = guest.checksum(&mut store, result);
-    report_and_exit(result, run_ns, (flip_ns != u64::MAX).then_some(flip_ns));
+    store.fuel_async_yield_interval(None)?;
+    finish(
+        &mut store,
+        &guest,
+        result,
+        args.fuel_budget,
+        run_ns,
+        flip_ns,
+    );
+}
+
+fn finish(
+    store: &mut Store<()>,
+    guest: &Guest,
+    result: wasmtime::Result<u64>,
+    fuel_budget: u64,
+    run_ns: u64,
+    flip_ns: Option<u64>,
+) -> ! {
+    let used = |store: &Store<()>| fuel_budget - store.get_fuel().unwrap_or(fuel_budget);
+    let run_fuel = used(store);
+    let result = guest.checksum_async(store, result);
+    let fuel = used(store);
+    report_and_exit(result, run_ns, flip_ns, run_fuel, fuel);
 }
 
 fn report_and_exit(
     result: Result<u64, (Phase, wasmtime::Error)>,
     run_ns: u64,
     flip_ns: Option<u64>,
+    run_fuel: u64,
+    fuel: u64,
 ) -> ! {
     let flip = flip_ns.map_or("-".to_string(), |f| f.to_string());
+    let fuel = format!("run_fuel={run_fuel} fuel={fuel}");
     let line = match result {
         Ok(checksum) => {
-            format!("result status=ok checksum={checksum} run_ns={run_ns} flip_ns={flip}")
+            format!("result status=ok checksum={checksum} run_ns={run_ns} flip_ns={flip} {fuel}")
         }
         Err((phase, err)) => {
             let trap = err
@@ -696,7 +688,9 @@ fn report_and_exit(
                 Phase::Run => "run",
                 Phase::Verify => "verify",
             };
-            format!("result status=trap trap={trap} phase={phase} run_ns={run_ns} flip_ns={flip}")
+            format!(
+                "result status=trap trap={trap} phase={phase} run_ns={run_ns} flip_ns={flip} {fuel}"
+            )
         }
     };
     let mut out = std::io::stdout().lock();
