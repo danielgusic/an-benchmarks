@@ -18,7 +18,6 @@ WASMTIME="${WASMTIME_BIN:-$WASMTIME_SOURCE/target/release/wasmtime}"
 TRANSPILER="$TRANSPILER_SOURCE/target/release/wasm-float-transpiler"
 SOFT_FLOAT="$TRANSPILER_SOURCE/target/wasm32-wasip1/release/libwasm_soft_float_apfloat.a"
 
-REGULAR_WASM="$BUILD/speedtest1.regular.wasm"
 ENCODED_WASM="$BUILD/speedtest1.encoded.wasm"
 REGULAR_CWASM="$BUILD/speedtest1.regular.cwasm"
 ENCODED_CWASM="$BUILD/speedtest1.encoded.cwasm"
@@ -60,10 +59,7 @@ CFLAGS=(
   "$SQLITE/sqlite3.c"
 )
 
-echo "==> Compile regular SQLite"
-"$CLANG" "${CFLAGS[@]}" -o "$REGULAR_WASM"
-
-echo "==> Compile and transpile encoded SQLite"
+echo "==> Compile and transpile soft-float SQLite"
 EXPORTS=()
 SYMBOLS="$("$LLVM_NM" --defined-only "$SOFT_FLOAT" \
   | awk '$2 == "T" && $3 ~ /^__wasm_soft_float_/ {print $3}' | sort -u)"
@@ -77,8 +73,9 @@ WITH_HELPERS="$BUILD/speedtest1.with-helpers.wasm"
 "$TRANSPILER" "$WITH_HELPERS" "$ENCODED_WASM"
 rm "$WITH_HELPERS"
 
+# Both modules use the same soft-float Wasm; only AN encoding differs.
 echo "==> Precompile both modules"
-"$WASMTIME" compile -C cache=n -C an-encoding=n "$REGULAR_WASM" -o "$REGULAR_CWASM"
+"$WASMTIME" compile -C cache=n -C an-encoding=n "$ENCODED_WASM" -o "$REGULAR_CWASM"
 "$WASMTIME" compile -C cache=n -C an-encoding=y "$ENCODED_WASM" -o "$ENCODED_CWASM"
 
 echo "==> Done. Run ./run.sh"
