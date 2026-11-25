@@ -2,7 +2,7 @@
 
 A harness for microbenchmarking WASM modules.
 
-I includes 2 modes:
+Includes 2 modes:
 - Regular microbenchmarks to benchmark performance
 - Fault injection to benchmark safety 
 
