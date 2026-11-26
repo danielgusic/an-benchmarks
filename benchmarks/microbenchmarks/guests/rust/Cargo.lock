@@ -24,10 +24,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "micro-abi"
-version = "0.1.0"
-
-[[package]]
 name = "primes"
 version = "0.1.0"
 dependencies = [
@@ -36,4 +32,11 @@ dependencies = [
 
 [[package]]
 name = "quicksort"
+version = "0.1.0"
+dependencies = [
+ "micro-abi",
+]
+
+[[package]]
+name = "micro-abi"
 version = "0.1.0"

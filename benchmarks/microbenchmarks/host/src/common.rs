@@ -1,4 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    pin::pin,
+    task::{Context as TaskContext, Poll, Waker},
+};
 
 use anyhow::{Result, bail};
 use clap::Args;
@@ -64,7 +69,7 @@ impl GuestOpts {
         }
     }
 
-    pub fn engine(&self) -> Result<Engine> {
+    pub fn config(&self) -> Config {
         let mut config = Config::new();
         config.max_wasm_stack(WASM_STACK);
         if self.an {
@@ -73,7 +78,11 @@ impl GuestOpts {
                 config.an_constant(a);
             }
         }
-        Ok(Engine::new(&config)?)
+        config
+    }
+
+    pub fn engine(&self) -> Result<Engine> {
+        Ok(Engine::new(&self.config())?)
     }
 }
 
@@ -174,6 +183,19 @@ impl Guest {
         }
     }
 
+    pub fn checksum_async(
+        &self,
+        store: &mut Store<()>,
+        run: wasmtime::Result<u64>,
+    ) -> Result<u64, (Phase, wasmtime::Error)> {
+        let value = run.map_err(|e| (Phase::Run, e))?;
+        match &self.verify {
+            Some(verify) => Ok(value
+                ^ block_on(verify.call_async(&mut *store, ())).map_err(|e| (Phase::Verify, e))?),
+            None => Ok(value),
+        }
+    }
+
     pub fn setup(&self, store: &mut Store<()>, param: u64) -> Result<()> {
         if let Some(init) = &self.initialize {
             init.call(&mut *store, ())
@@ -194,5 +216,15 @@ impl Guest {
                 .context("guest trapped in bench_reset")?;
         }
         Ok(())
+    }
+}
+
+pub fn block_on<F: Future>(future: F) -> F::Output {
+    let mut future = pin!(future);
+    let mut cx = TaskContext::from_waker(Waker::noop());
+    loop {
+        if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
+            return output;
+        }
     }
 }

@@ -9,11 +9,11 @@
 #   SEED=7 ./inject.sh                        campaign seed (default 0)
 #   JOBS=4 ./inject.sh                        parallel experiments (default 1; keep it at or
 #                                             below the number of performance cores)
-#   TIMEOUT_FACTOR=10 ./inject.sh             hang threshold in golden process times
+#   TIMEOUT_FACTOR=10 ./inject.sh             fuel budget in multiples of the golden run's fuel
 #   BENCHES=... MODES=... AN_CONSTANT=... BENCH_CONF=...   as in run.sh
 #
 # One campaign per (benchmark, mode). Each experiment flips one bit in a fresh
-# process and is classified as correct, sdc, an-detected, trap, crash, timeout
+# process, at a fuel-determined point of bench_run, and is classified as correct, sdc, an-detected, trap, crash, timeout
 # or late (see host/target/release/micro-host inject --help). The golden
 # (fault-free) checksum must be the same in both modes.
 #

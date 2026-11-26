@@ -2,7 +2,7 @@
 
 A harness for microbenchmarking WASM modules.
 
-I includes 2 modes:
+Includes 2 modes:
 - Regular microbenchmarks to benchmark performance
 - Fault injection to benchmark safety 
 
@@ -29,7 +29,7 @@ You can set the following options via environment variables:
 - `WIGHTING` `size` if a bit should be selected uniformly from all bits or `equal` if first a region should be selected equally and then uniform one bit within the region
 - `SEED` the seed (default `0`)
 - `JOBS` number of experiments run in parallel (default `1`)
-- `TIMEOUT_FACTOR` result times out after this many golden run times (default `10`)
+- `TIMEOUT_FACTOR` an experiment times out once it uses this many times the golden run's fuel (default `10`)
 - `BENCHES`, `MODE`, `AN_CONSTANT`, `BENCH_CONF` same as for performance
 
 More docs coming soon™
