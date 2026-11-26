@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["micro-abi", "fibonacci", "bubblesort"]
+members = ["micro-abi", "fibonacci", "bubblesort", "quicksort"]
 
 [workspace.package]
 edition = "2024"
